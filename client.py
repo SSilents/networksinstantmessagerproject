@@ -56,7 +56,7 @@ def main():
             s.close() #also causes recv loop to exit
             break
         if not msg.strip():
-            break
+            continue
         s.sendall(f"{msg}\n".encode())
 
 if __name__ == "__main__":
