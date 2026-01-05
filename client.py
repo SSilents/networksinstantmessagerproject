@@ -24,10 +24,12 @@ def recv_loop(sock:socket.socket):
         msg = data.decode(errors="replace")
         print("\n" + msg, end="", flush=True)
 
+        if not (msg.startswith("ERROR: ") or msg.startswith("(to )") or prompt_ready == False):
+            print(">>",end="",flush=True)
+
         if not prompt_ready:
             prompt_ready = True
-
-        print(">>", end="", flush=True)
+    
 
 
 
@@ -40,12 +42,10 @@ def main():
     #Starts the recv thread
     t = threading.Thread(target=recv_loop, args=(s,),daemon=True)
     t.start()
-
+    while not prompt_ready: pass
     while True:
-        if prompt_ready:
-            print(">>",end="",flush=True)
         try:
-            msg = input()
+            msg = input(">>")
         except EOFError:
             msg = "/quit"
         

@@ -20,9 +20,13 @@ def broadcast(payload_bytes,exclude=None):
                 client.close()
 
 def unicast(payload_bytes,user,sender):
+    sock = sock_by_user[sender]
+    msg = f"(to {user}) ".encode() + payload_bytes + b"\n"
+    sock.sendall(msg)
     sock = sock_by_user[user]
     msg = b"(private) " + f"[{sender}] ".encode() + payload_bytes + b"\n"
     sock.sendall(msg)
+
 
 def disconnect(sock,unexpected=False):
     user = user_by_sock.get(sock)
@@ -72,11 +76,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     disconnect(sock)
                 elif parts[0] == b"/to":
                     if len(parts) < 3:
-                        sock.sendall(b"/to command incorrectly formatted. Should be /to USERNAME MESSAGE.\n")
+                        sock.sendall(b"ERROR: /to command incorrectly formatted. Should be /to USERNAME MESSAGE.\n")
                         continue
                     username = parts[1].decode()
                     if username not in sock_by_user:
-                        sock.sendall(b"Username not found.\n")
+                        sock.sendall(b"ERROR: Username not found.\n")
                         continue
 
                     message = b" ".join(parts[2:])
