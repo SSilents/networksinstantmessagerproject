@@ -5,6 +5,16 @@ port = int(sys.argv[1])
 user_by_sock = {}
 
 
+def broadcast(sender_sock, payload_bytes):
+    for client in sockets:
+        if client != sender_sock and client != s:
+            try:
+                client.sendall(payload_bytes)
+            except:
+                sockets.remove(client)
+                user_by_sock.pop(client,None)
+                client.close()
+
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((host, port))
     sockets = [s]
@@ -27,6 +37,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     continue
                 if not data:
                     sockets.remove(sock)
+                    user_by_sock.pop(sock,None)
                     sock.close()
                     continue
                 parts = data.split()
@@ -36,14 +47,18 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     if len(parts) != 2:
                         sock.sendall(b"Username not provided by client.")
                         sockets.remove(sock)
+                        user_by_sock.pop(sock,None)
                         sock.close()
                         continue
                     sts = parts[1] + b" connected \n"
                     user_by_sock[sock] = parts[1]
-                    sock.sendall(sts)
+                    broadcast(sock,sts)
                 else:
-                    sock.sendall(data)
+                    username = user_by_sock.get(sock,b"UNKNOWN")
+                    data = b"%s: %s" % (username, data)
+                    broadcast(sock,data)
         for sock in exceptional:
             if sock in sockets:
                 sockets.remove(sock)
+            user_by_sock.pop(sock,None)
             sock.close()
