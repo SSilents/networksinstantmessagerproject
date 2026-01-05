@@ -3,7 +3,9 @@ username = sys.argv[1]
 hostname = sys.argv[2]
 port = int(sys.argv[3])
 
+## Flags:
 prompt_ready = False
+quitting = False
 
 def recv_loop(sock:socket.socket):
     global prompt_ready
@@ -11,11 +13,13 @@ def recv_loop(sock:socket.socket):
         try:
             data = sock.recv(1024)
         except (ConnectionResetError,OSError):
-            print("Disconnected (Connection reset).")
+            if not quitting:
+                print("\nDisconnected from server.")
             break
         
         if not data:
-            print("Server closed the connection.")
+            if not quitting:
+                print("\nServer closed the connection.")
             break
         msg = data.decode(errors="replace")
         print("\n" + msg, end="", flush=True)
@@ -46,6 +50,9 @@ def main():
             msg = "/quit"
         
         if msg.strip() == "/quit":
+            global quitting
+            quitting = True
+            s.sendall(b"QUIT\n")
             s.close() #also causes recv loop to exit
             break
         if not msg.strip():
