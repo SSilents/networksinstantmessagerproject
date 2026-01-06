@@ -42,20 +42,30 @@ def join_group(sock,group):
     msg = f"[{username}] has joined group [{group}]\n".encode()
     multicast(group,msg,[sock])
 
-def leave_group(sock,group):
+def leave_group(sock,group,*,announce=True,ack=True):
     if group not in groups:
         sock.sendall(b"ERROR: Group does not exist.\n")
         return
     if sock not in groups[group]:
         sock.sendall(b"ERROR: You are not a member of this group.\n")
         return
+    
     groups[group].remove(sock)
-    groups_by_sock[sock].remove(group)
+
+    if sock in groups_by_sock and group in groups_by_sock[sock]:
+        groups_by_sock[sock].remove(group)
+        if not groups_by_sock[sock]:
+            del groups_by_sock[sock]
+
+    username = user_by_sock.get(sock,"UNKNOWN")   
+
     if not groups[group]:
         del groups[group]
-    sock.sendall(f"Left group [{group}]\n".encode())
-    if groups[group]:
-        username = user_by_sock.get(sock,"UNKNOWN")
+        sock.sendall(f"Left group [{group}] (group deleted)\n".encode())
+        return
+    if ack:
+        sock.sendall(f"Left group [{group}]\n".encode())
+    if announce:
         message = f"[{username}] left group [{group}]\n".encode()
         multicast(group,message,[sock])
 
@@ -74,17 +84,20 @@ def disconnect(sock,unexpected=False):
     user = user_by_sock.get(sock)
     if sock in sockets:
         sockets.remove(sock)
-        
-    for group in groups_by_sock.get(sock, set()):
-        groups[group].remove(sock)
-        if not groups[group]:
-            del groups[group]
-    groups_by_sock.pop(sock, None)
 
+    for group in list(groups_by_sock.get(sock, [])):
+        leave_group(sock,group,announce=True,ack=False)
+
+    groups_by_sock.pop(sock, None)
     user_by_sock.pop(sock,None)
-    sock_by_user.pop(user,None)
-    sock.close()
-    if user: broadcast(f"[{user}] has left\n".encode())
+
+    if user:
+        sock_by_user.pop(user,None)
+        
+    try:
+        sock.close()
+    finally:
+        if user: broadcast(f"[{user}] has left\n".encode())
 
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
