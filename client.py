@@ -7,6 +7,9 @@ port = int(sys.argv[3])
 prompt_ready = False
 quitting = False
 
+input_allowed = threading.Event()
+input_allowed.set()
+
 def recv_loop(sock:socket.socket):
     global prompt_ready
     while True:
@@ -24,8 +27,15 @@ def recv_loop(sock:socket.socket):
         msg = data.decode(errors="replace")
         print("\n" + msg, end="", flush=True)
 
-        if not (msg.startswith("ERROR: ") or msg.startswith("(to ") or msg.startswith("(created group)") or msg.startswith("(joined group)") or prompt_ready == False):
+        if "(shared) end" in msg:
+            input_allowed.set()
+
+        if not (msg.startswith("ERROR: ") or msg.startswith("(to ") or msg.startswith("(created group)") or msg.startswith("(joined group)") or msg.startswith("(shared)") or prompt_ready == False):
             print(">>",end="",flush=True)
+        
+
+        
+
 
         if not prompt_ready:
             prompt_ready = True
@@ -45,6 +55,7 @@ def main():
     while not prompt_ready: pass
     while True:
         try:
+            input_allowed.wait()
             msg = input(">>")
         except EOFError:
             msg = "/quit"
@@ -55,6 +66,8 @@ def main():
             s.sendall(b"QUIT\n")
             s.close() #also causes recv loop to exit
             break
+        if msg.strip() == "/share":
+            input_allowed.clear()
         if not msg.strip():
             continue
         s.sendall(f"{msg}\n".encode())

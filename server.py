@@ -1,4 +1,12 @@
-import sys, socket, select
+import sys, socket, select, os
+
+SHARED_DIR = os.environ.get("SERVER_SHARED_FILES")
+
+if not SHARED_DIR:
+    SHARED_DIR = os.path.join(os.path.dirname(__file__),"SharedFiles")
+if not os.path.isdir(SHARED_DIR):
+    print(f"Error: SharedFiles directory not found: {SHARED_DIR}")
+
 host = "127.0.0.1"
 port = int(sys.argv[1])
 
@@ -93,12 +101,23 @@ def disconnect(sock,unexpected=False):
 
     if user:
         sock_by_user.pop(user,None)
-        
+
     try:
         sock.close()
     finally:
         if user: broadcast(f"[{user}] has left\n".encode())
 
+def list_files(sock):
+    dir_list = os.listdir(SHARED_DIR)
+    message = f"(shared) Number of files: {len(dir_list)}".encode()
+    sock.sendall(message)
+    for f in dir_list:
+        size = os.stat(os.path.join(SHARED_DIR,f)).st_size
+        message = f"(shared) {f} : {size}Bytes\n".encode()
+        sock.sendall(message)
+    message = f"(shared) end\n".encode()
+    sock.sendall(message)
+    
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((host, port))
@@ -176,6 +195,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         continue
                     groupname = parts[1].decode()
                     leave_group(sock,groupname)
+                elif parts[0] == b"/share":
+                    if len(parts) != 1:
+                        sock.sendall(b"ERROR: /share command incorrectly formatted. Should be /share.\n")
+                        continue
+                    list_files(sock)
                 else:
                     username = user_by_sock.get(sock,"UNKNOWN")
                     msg = f"[{username}] {data.decode(errors='replace')}"
