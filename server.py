@@ -4,7 +4,8 @@ port = int(sys.argv[1])
 
 user_by_sock = {}
 sock_by_user = {}
-
+groups = {}
+groups_by_sock = {}
 
 def broadcast(payload_bytes,exclude=None):
     if exclude == None:
@@ -14,10 +15,7 @@ def broadcast(payload_bytes,exclude=None):
             try:
                 client.sendall(payload_bytes)
             except OSError:
-                sockets.remove(client)
-                username = user_by_sock.pop(client,None)
-                sock_by_user.pop(username,None)
-                client.close()
+                disconnect(client, True)
 
 def unicast(payload_bytes,user,sender):
     sock = sock_by_user[sender]
@@ -26,6 +24,50 @@ def unicast(payload_bytes,user,sender):
     sock = sock_by_user[user]
     msg = b"(private) " + f"[{sender}] ".encode() + payload_bytes + b"\n"
     sock.sendall(msg)
+
+def join_group(sock,group):
+    msg = ""
+    if group not in groups:
+        groups[group] = []
+        msg = f"(created group) {group}\n".encode()
+    groups[group].append(sock)
+    if sock not in groups_by_sock:
+        groups_by_sock[sock] = [group]
+    else:
+        groups_by_sock[sock].append(group)
+    if not msg:
+        msg = f"(joined group) {group}\n".encode()
+    sock.sendall(msg)
+    username = user_by_sock.get(sock,"UNKNOWN")
+    msg = f"[{username}] has joined group [{group}]\n".encode()
+    multicast(group,msg,[sock])
+
+def leave_group(sock,group):
+    if group not in groups:
+        sock.sendall(b"ERROR: Group does not exist.\n")
+        return
+    if sock not in groups[group]:
+        sock.sendall(b"ERROR: You are not a member of this group.\n")
+        return
+    groups[group].remove(sock)
+    groups_by_sock[sock].remove(group)
+    if not groups[group]:
+        del groups[group]
+    sock.sendall(f"Left group [{group}]\n".encode())
+    if groups[group]:
+        username = user_by_sock.get(sock,"UNKNOWN")
+        message = f"[{username}] left group [{group}]".encode()
+        multicast(group,message,[sock])
+
+def multicast(group, payload, exclude=None):
+    if exclude == None:
+        exclude = []
+    for member in groups[group]:
+        if member != s and member not in exclude:
+            try:
+                member.sendall(payload)
+            except OSError:
+                disconnect(member, True)
 
 
 def disconnect(sock,unexpected=False):
@@ -86,6 +128,34 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     message = b" ".join(parts[2:])
                     sender = user_by_sock.get(sock,"UNKNOWN")
                     unicast(message,username,sender)
+                elif parts[0] == b"/join":
+                    if len(parts) != 2:
+                        sock.sendall(b"ERROR: /join command incorrectly formatted. Should be /join GROUPNAME.\n")
+                        continue
+                    groupname = parts[1].decode()
+                    join_group(sock,groupname)
+                elif parts[0] == b"/group":
+                    if len(parts) < 3:
+                        sock.sendall(b"ERROR: /group command incorrectly formatted. Should be /group GROUPNAME MESSAGE.\n")
+                        continue
+                    groupname = parts[1].decode()
+                    if groupname not in groups:
+                        sock.sendall(b"ERROR: Group not found.\n")
+                        continue
+                    if sock not in groups[groupname]:
+                        sock.sendall(b"ERROR: You are not a member of this group.\n")
+                        continue
+                    message = b" ".join(parts[2:])
+                    sender = user_by_sock.get(sock,"UNKNOWN")
+                    message = message.decode()
+                    formattedmsg = f"[{groupname}] [{sender}] {message}\n".encode()
+                    multicast(groupname,formattedmsg,[sock])
+                elif parts[0] == b"/leave":
+                    if len(parts) != 2:
+                        sock.sendall(b"ERROR: /leave command incorrectly formatted. Should be /leave GROUPNAME.\n")
+                        continue
+                    groupname = parts[1].decode()
+                    leave_group(sock,groupname)
                 else:
                     username = user_by_sock.get(sock,"UNKNOWN")
                     msg = f"[{username}] {data.decode(errors='replace')}"

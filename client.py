@@ -24,7 +24,7 @@ def recv_loop(sock:socket.socket):
         msg = data.decode(errors="replace")
         print("\n" + msg, end="", flush=True)
 
-        if not (msg.startswith("ERROR: ") or msg.startswith("(to )") or prompt_ready == False):
+        if not (msg.startswith("ERROR: ") or msg.startswith("(to ") or msg.startswith("(created group)") or msg.startswith("(joined group)") or prompt_ready == False):
             print(">>",end="",flush=True)
 
         if not prompt_ready:
