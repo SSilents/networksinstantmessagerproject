@@ -36,7 +36,7 @@ def join_group(sock,group):
     else:
         groups_by_sock[sock].append(group)
     if not msg:
-        msg = f"(joined group) {group}\n".encode()
+        msg = f"(joined group) [{group}]\n".encode()
     sock.sendall(msg)
     username = user_by_sock.get(sock,"UNKNOWN")
     msg = f"[{username}] has joined group [{group}]\n".encode()
@@ -56,7 +56,7 @@ def leave_group(sock,group):
     sock.sendall(f"Left group [{group}]\n".encode())
     if groups[group]:
         username = user_by_sock.get(sock,"UNKNOWN")
-        message = f"[{username}] left group [{group}]".encode()
+        message = f"[{username}] left group [{group}]\n".encode()
         multicast(group,message,[sock])
 
 def multicast(group, payload, exclude=None):
@@ -74,6 +74,13 @@ def disconnect(sock,unexpected=False):
     user = user_by_sock.get(sock)
     if sock in sockets:
         sockets.remove(sock)
+        
+    for group in groups_by_sock.get(sock, set()):
+        groups[group].remove(sock)
+        if not groups[group]:
+            del groups[group]
+    groups_by_sock.pop(sock, None)
+
     user_by_sock.pop(sock,None)
     sock_by_user.pop(user,None)
     sock.close()
