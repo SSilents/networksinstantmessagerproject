@@ -15,6 +15,12 @@ sock_by_user = {}
 groups = {}
 groups_by_sock = {}
 
+download_proto_by_sock = {}
+
+udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+udp_port_by_sock = {}
+recv_buf_by_sock = {}  # per-socket line buffer
+
 def broadcast(payload_bytes,exclude=None):
     if exclude == None:
         exclude = []
@@ -98,6 +104,8 @@ def disconnect(sock,unexpected=False):
 
     groups_by_sock.pop(sock, None)
     user_by_sock.pop(sock,None)
+    download_proto_by_sock.pop(sock,None)
+    udp_port_by_sock.pop(sock,None)
 
     if user:
         sock_by_user.pop(user,None)
@@ -109,7 +117,7 @@ def disconnect(sock,unexpected=False):
 
 def list_files(sock):
     dir_list = os.listdir(SHARED_DIR)
-    message = f"(shared) Number of files: {len(dir_list)}".encode()
+    message = f"(shared) Number of files: {len(dir_list)}\n".encode()
     sock.sendall(message)
     for f in dir_list:
         size = os.stat(os.path.join(SHARED_DIR,f)).st_size
@@ -118,6 +126,34 @@ def list_files(sock):
     message = f"(shared) end\n".encode()
     sock.sendall(message)
     
+def tcp_download(filename,sock):
+    path = os.path.join(SHARED_DIR,filename)
+    size = os.path.getsize(path)
+    sock.sendall(f"(file) ok |{filename}| {size} Bytes\n".encode())
+    with open(path,"rb") as fp:
+        while True:
+            chunk = fp.read(4096)
+            if not chunk: break
+            sock.sendall(chunk)
+def udp_download(filename,client_sock):
+    client_ip = client_sock.getpeername()[0]
+    client_port = udp_port_by_sock.get(client_sock)
+    if not client_port:
+        client_sock.sendall(b"ERROR: UDP port not registered.")
+        return
+    client_addr = (client_ip,client_port)
+    path = os.path.join(SHARED_DIR,filename)
+    size = os.path.getsize(path)
+    client_sock.sendall(f"(file) ok |{filename}| {size} Bytes\n".encode())
+    with open(path,"rb") as fp:
+        seq = 0
+        while True:
+            data = fp.read(1000)
+            if not data: break
+            pkt = seq.to_bytes(4,"big") + data
+            udp_sock.sendto(pkt,client_addr)
+            seq += 1
+    udp_sock.sendto((0xFFFFFFFF).to_bytes(4,"big"),client_addr)
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.bind((host, port))
@@ -130,99 +166,138 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             if sock == s:
                 conn, addr = s.accept()
                 sockets.append(conn)
+                recv_buf_by_sock[conn] = ""  # init buffer
                 conn.sendall(b"Welcome ... \n")
                 print(f"Connected by {addr}")
             else:
                 try:
-                    data = sock.recv(1024)
+                    data = sock.recv(4096)
                 except ConnectionResetError:
                     disconnect(sock,True)
                     continue
                 if not data:
                     disconnect(sock,True)
                     continue
-                parts = data.split()
-                if not parts:
-                    continue
-                if parts[0] == b"HELLO" and sock not in user_by_sock:
-                    if len(parts) != 2:
-                        sock.sendall(b"Username not provided by client.")
-                        disconnect(sock,True)
+
+                # Append to buffer and process complete lines
+                buf = recv_buf_by_sock.get(sock, "") + data.decode(errors="replace")
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    line = line.strip()
+                    if not line:
                         continue
-                    username = parts[1].decode()
-                    user_by_sock[sock] = username
-                    sock_by_user[username] = sock
-                    broadcast(f"[{username}] has joined\n".encode(),[sock])
-                elif parts[0] == b"QUIT":
-                    disconnect(sock)
-                elif parts[0] == b"/to":
-                    if len(parts) < 3:
-                        sock.sendall(b"ERROR: /to command incorrectly formatted. Should be /to USERNAME MESSAGE.\n")
-                        continue
-                    username = parts[1].decode()
-                    if username not in sock_by_user:
-                        sock.sendall(b"ERROR: Username not found.\n")
+                    parts = line.split()
+                    if not parts:
                         continue
 
-                    message = b" ".join(parts[2:])
-                    sender = user_by_sock.get(sock,"UNKNOWN")
-                    if username == sender:
-                        sock.sendall(b"ERROR: Cannot send message to self.\n")
-                        continue
-                    unicast(message,username,sender)
-                elif parts[0] == b"/join":
-                    if len(parts) != 2:
-                        sock.sendall(b"ERROR: /join command incorrectly formatted. Should be /join GROUPNAME.\n")
-                        continue
-                    groupname = parts[1].decode()
-                    join_group(sock,groupname)
-                elif parts[0] == b"/group":
-                    if len(parts) < 3:
-                        sock.sendall(b"ERROR: /group command incorrectly formatted. Should be /group GROUPNAME MESSAGE.\n")
-                        continue
-                    groupname = parts[1].decode()
-                    if groupname not in groups:
-                        sock.sendall(b"ERROR: Group not found.\n")
-                        continue
-                    if sock not in groups[groupname]:
-                        sock.sendall(b"ERROR: You are not a member of this group.\n")
-                        continue
-                    message = b" ".join(parts[2:])
-                    sender = user_by_sock.get(sock,"UNKNOWN")
-                    message = message.decode()
-                    formattedmsg = f"[{groupname}] [{sender}] {message}\n".encode()
-                    multicast(groupname,formattedmsg,[sock])
-                elif parts[0] == b"/leave":
-                    if len(parts) != 2:
-                        sock.sendall(b"ERROR: /leave command incorrectly formatted. Should be /leave GROUPNAME.\n")
-                        continue
-                    groupname = parts[1].decode()
-                    leave_group(sock,groupname)
-                elif parts[0] == b"/share":
-                    if len(parts) != 1:
-                        sock.sendall(b"ERROR: /share command incorrectly formatted. Should be /share.\n")
-                        continue
-                    list_files(sock)
-                elif parts[0] == b"/get":
-                    if len(parts) <2:
-                        sock.sendall(b"ERROR: /get command incorrectly formatted. Should be /get FILENAME.\n")
-                        continue
-                    dir_list = os.listdir(SHARED_DIR)
-                    filename = b" ".join(parts[1:]).decode()
-                    if filename not in dir_list:
-                        sock.sendall(b"ERROR: file not found.\n")
-                    path = os.path.join(SHARED_DIR,filename)
-                    size = os.path.getsize(path)
-                    sock.sendall(f"(file) ok |{filename}| {size} Bytes\n".encode())
-                    with open(path,"rb") as fp:
-                        while True:
-                            chunk = fp.read(4096)
-                            if not chunk: break
-                            sock.sendall(chunk)
-                else:
-                    username = user_by_sock.get(sock,"UNKNOWN")
-                    msg = f"[{username}] {data.decode(errors='replace')}"
-                    data = msg.encode()
-                    broadcast(data,[sock])
+                    cmd = parts[0]
+
+                    if cmd == "HELLO" and sock not in user_by_sock:
+                        if len(parts) != 2:
+                            sock.sendall(b"Username not provided by client.")
+                            disconnect(sock,True)
+                            continue
+                        username = parts[1]
+                        user_by_sock[sock] = username
+                        sock_by_user[username] = sock
+                        broadcast(f"[{username}] has joined\n".encode(),[sock])
+
+                    elif cmd == "QUIT":
+                        disconnect(sock)
+
+                    elif cmd == "/to":
+                        if len(parts) < 3:
+                            sock.sendall(b"ERROR: /to command incorrectly formatted. Should be /to USERNAME MESSAGE.\n")
+                            continue
+                        username = parts[1]
+                        if username not in sock_by_user:
+                            sock.sendall(b"ERROR: Username not found.\n")
+                            continue
+                        message = " ".join(parts[2:]).encode()
+                        sender = user_by_sock.get(sock,"UNKNOWN")
+                        if username == sender:
+                            sock.sendall(b"ERROR: Cannot send message to self.\n")
+                            continue
+                        unicast(message,username,sender)
+
+                    elif cmd == "/join":
+                        if len(parts) != 2:
+                            sock.sendall(b"ERROR: /join command incorrectly formatted. Should be /join GROUPNAME.\n")
+                            continue
+                        groupname = parts[1]
+                        join_group(sock,groupname)
+
+                    elif cmd == "/group":
+                        if len(parts) < 3:
+                            sock.sendall(b"ERROR: /group command incorrectly formatted. Should be /group GROUPNAME MESSAGE.\n")
+                            continue
+                        groupname = parts[1]
+                        if groupname not in groups:
+                            sock.sendall(b"ERROR: Group not found.\n")
+                            continue
+                        if sock not in groups[groupname]:
+                            sock.sendall(b"ERROR: You are not a member of this group.\n")
+                            continue
+                        message = " ".join(parts[2:])
+                        sender = user_by_sock.get(sock,"UNKNOWN")
+                        formattedmsg = f"[{groupname}] [{sender}] {message}\n".encode()
+                        multicast(groupname,formattedmsg,[sock])
+
+                    elif cmd == "/leave":
+                        if len(parts) != 2:
+                            sock.sendall(b"ERROR: /leave command incorrectly formatted. Should be /leave GROUPNAME.\n")
+                            continue
+                        groupname = parts[1]
+                        leave_group(sock,groupname)
+
+                    elif cmd == "/share":
+                        if len(parts) != 1:
+                            sock.sendall(b"ERROR: /share command incorrectly formatted. Should be /share.\n")
+                            continue
+                        list_files(sock)
+
+                    elif cmd == "/get":
+                        if len(parts) < 2:
+                            sock.sendall(b"ERROR: /get command incorrectly formatted. Should be /get FILENAME.\n")
+                            continue
+                        dir_list = os.listdir(SHARED_DIR)
+                        filename = " ".join(parts[1:])
+                        if filename not in dir_list:
+                            sock.sendall(b"ERROR: file not found.\n")
+                            continue
+                        proto = download_proto_by_sock.get(sock,"TCP")
+                        if proto == "TCP":
+                            tcp_download(filename,sock)
+                        elif proto == "UDP":
+                            udp_download(filename,sock)
+
+                    elif cmd == "/proto":
+                        if len(parts) != 2:
+                            sock.sendall(b"ERROR: /proto command incorrectly formatted. Should be /proto tcp|udp.\n")
+                            continue
+                        if parts[1].lower() == "tcp":
+                            download_proto_by_sock[sock] = "TCP"
+                            sock.sendall(b"(proto) ok tcp\n")
+                        elif parts[1].lower() == "udp":
+                            download_proto_by_sock[sock] = "UDP"
+                            sock.sendall(b"(proto) ok udp\n")
+                        else:
+                            sock.sendall(b"ERROR: /proto command incorrectly formatted. Should be /proto tcp|udp.\n")
+
+                    elif cmd == "UDPPORT":
+                        if len(parts) != 2:
+                            sock.sendall(b"ERROR: UDP port not provided by client.\n")
+                            continue
+                        try:
+                            udp_port_by_sock[sock] = int(parts[1])
+                        except ValueError:
+                            sock.sendall(b"ERROR: invalid UDP port.\n")
+
+                    else:
+                        username = user_by_sock.get(sock,"UNKNOWN")
+                        msg = f"[{username}] {line}\n".encode()
+                        broadcast(msg,[sock])
+
+                recv_buf_by_sock[sock] = buf  # save remaining partial line
         for sock in exceptional:
             disconnect(sock,True)
