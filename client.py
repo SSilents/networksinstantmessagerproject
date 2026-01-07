@@ -30,13 +30,16 @@ def recv_loop(sock:socket.socket):
                 print("\nServer closed the connection.")
             break
         msg = data.decode(errors="replace")
-        print("\n" + msg, end="", flush=True)
+        print(msg, end="", flush=True)
 
         if "(shared) end" in msg:
             input_allowed.set()
         
         if "(file) ok" in msg:
-            _,_,filename,size,_ = msg.split()
+            parts = msg.split("|")
+            filename = parts[1]
+            filename = os.path.basename(filename)
+            size = parts[2].split()[0]
             size = int(size)
             filepath = os.path.join(DOWNLOAD_DIR,filename)
             fp = open(filepath,"wb")
@@ -53,8 +56,8 @@ def recv_loop(sock:socket.socket):
 
 
 
-        if not (msg.startswith("ERROR: ") or msg.startswith("(to ") or msg.startswith("(created group)") or msg.startswith("(joined group)") or msg.startswith("(shared)") or msg.startswith("(file)") or prompt_ready == False):
-            print(">>",end="",flush=True)
+        # if not (msg.startswith("ERROR: ") or msg.startswith("(to ") or msg.startswith("(created group)") or msg.startswith("(joined group)") or msg.startswith("(shared)") or msg.startswith("(file)") or prompt_ready == False):
+        #     print(">>",end="",flush=True)
 
 
         if not prompt_ready:

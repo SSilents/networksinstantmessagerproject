@@ -166,6 +166,9 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 
                     message = b" ".join(parts[2:])
                     sender = user_by_sock.get(sock,"UNKNOWN")
+                    if username == sender:
+                        sock.sendall(b"ERROR: Cannot send message to self.\n")
+                        continue
                     unicast(message,username,sender)
                 elif parts[0] == b"/join":
                     if len(parts) != 2:
@@ -201,22 +204,21 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         continue
                     list_files(sock)
                 elif parts[0] == b"/get":
-                    if len(parts) !=2:
+                    if len(parts) <2:
                         sock.sendall(b"ERROR: /get command incorrectly formatted. Should be /get FILENAME.\n")
                         continue
                     dir_list = os.listdir(SHARED_DIR)
-                    filename = parts[1].decode()
+                    filename = b" ".join(parts[1:]).decode()
                     if filename not in dir_list:
                         sock.sendall(b"ERROR: file not found.\n")
                     path = os.path.join(SHARED_DIR,filename)
                     size = os.path.getsize(path)
-                    sock.sendall(f"(file) ok {filename} {size} Bytes\n".encode())
+                    sock.sendall(f"(file) ok |{filename}| {size} Bytes\n".encode())
                     with open(path,"rb") as fp:
                         while True:
                             chunk = fp.read(4096)
                             if not chunk: break
                             sock.sendall(chunk)
-                        sock.sendall(b"\n")
                 else:
                     username = user_by_sock.get(sock,"UNKNOWN")
                     msg = f"[{username}] {data.decode(errors='replace')}"
