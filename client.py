@@ -1,4 +1,4 @@
-import sys, socket, threading
+import sys, socket, threading, os
 username = sys.argv[1]
 hostname = sys.argv[2]
 port = int(sys.argv[3])
@@ -9,6 +9,11 @@ quitting = False
 
 input_allowed = threading.Event()
 input_allowed.set()
+
+DOWNLOAD_DIR = os.path.join(os.getcwd(),username)
+
+if not os.path.isdir(DOWNLOAD_DIR):
+    os.mkdir(DOWNLOAD_DIR)
 
 def recv_loop(sock:socket.socket):
     global prompt_ready
@@ -29,12 +34,27 @@ def recv_loop(sock:socket.socket):
 
         if "(shared) end" in msg:
             input_allowed.set()
+        
+        if "(file) ok" in msg:
+            _,_,filename,size,_ = msg.split()
+            size = int(size)
+            filepath = os.path.join(DOWNLOAD_DIR,filename)
+            fp = open(filepath,"wb")
+            bytes_left = size
+            while bytes_left > 0:
+                chunk = sock.recv(min(4096,bytes_left))
+                if not chunk:
+                    break
+                fp.write(chunk)
+                bytes_left -= len(chunk)
+            fp.close()
+            print(f"(file) downloaded {filename} ({size} bytes)")
+            input_allowed.set()
 
-        if not (msg.startswith("ERROR: ") or msg.startswith("(to ") or msg.startswith("(created group)") or msg.startswith("(joined group)") or msg.startswith("(shared)") or prompt_ready == False):
+
+
+        if not (msg.startswith("ERROR: ") or msg.startswith("(to ") or msg.startswith("(created group)") or msg.startswith("(joined group)") or msg.startswith("(shared)") or msg.startswith("(file)") or prompt_ready == False):
             print(">>",end="",flush=True)
-        
-
-        
 
 
         if not prompt_ready:
@@ -67,6 +87,8 @@ def main():
             s.close() #also causes recv loop to exit
             break
         if msg.strip() == "/share":
+            input_allowed.clear()
+        if "/get" in msg.strip():
             input_allowed.clear()
         if not msg.strip():
             continue
