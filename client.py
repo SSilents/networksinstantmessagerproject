@@ -13,6 +13,10 @@ quitting = False  # Indicates client is shutting down
 input_allowed = threading.Event()
 input_allowed.set()
 
+# Threading event to control when user disconnects (stops client code continuing looping through main)
+disconnected = threading.Event()
+disconnected.clear()
+
 # Create user-specific download directory
 DOWNLOAD_DIR = os.path.join(os.getcwd(), username)
 
@@ -35,12 +39,16 @@ def recv_loop(sock: socket.socket, udp_sock: socket.socket):
             data = sock.recv(4096)
         except (ConnectionResetError, OSError):
             if not quitting:
-                print("\nDisconnected from server.")
+                print("\nDisconnected from server. Press Enter to exit.\n")
+                disconnected.set()
+                input_allowed.set()
             break
 
         if not data:
             if not quitting:
-                print("\nServer closed the connection.")
+                print("Server closed the connection. Press Enter to exit.\n")
+                disconnected.set()
+                input_allowed.set()
             break
 
         buf += data
@@ -191,6 +199,9 @@ def main():
             msg = input(">>")
         except EOFError:
             msg = "/quit"
+        
+        if disconnected.is_set():
+            break
 
         # Handle quit command
         if msg.strip() == "/quit":
