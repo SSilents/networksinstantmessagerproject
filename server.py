@@ -255,10 +255,13 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     # Initial handshake: client sends username
                     if cmd == "HELLO" and sock not in user_by_sock:
                         if len(parts) != 2:
-                            sock.sendall(b"Username not provided by client.")
+                            sock.sendall(b"ERROR: Username not provided by client.\n")
                             disconnect(sock, True)
                             continue
                         username = parts[1]
+                        if username in sock_by_user:
+                            sock.sendall(b"ERROR: Username already in use.\n")
+                            disconnect(sock,True)
                         user_by_sock[sock] = username
                         sock_by_user[username] = sock
                         broadcast(f"[{username}] has joined\n".encode(), [sock])
